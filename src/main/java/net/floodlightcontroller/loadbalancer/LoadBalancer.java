@@ -102,18 +102,18 @@ public class LoadBalancer implements IFloodlightModule,
     
     protected IDebugCounterService debugCounterService;
     private IDebugCounter counterPacketOut;
-    protected IDeviceService deviceManagerService;
-    protected IRoutingService routingEngineService;
-    protected ITopologyService topologyService;
-    protected IStaticFlowEntryPusherService sfpService;
+    public IDeviceService deviceManagerService;
+    public IRoutingService routingEngineService;
+    public    ITopologyService topologyService;
+    public IStaticFlowEntryPusherService sfpService;
     protected IOFSwitchService switchService;
     
-    protected HashMap<String, LBVip> vips;
-    protected HashMap<String, LBPool> pools;
-    protected HashMap<String, LBMember> members;
+    public HashMap<String, LBVip> vips;
+    public HashMap<String, LBPool> pools;
+    public HashMap<String, LBMember> members;
     protected HashMap<Integer, String> vipIpToId;
     protected HashMap<Integer, MacAddress> vipIpToMac;
-    protected HashMap<Integer, String> memberIpToId;
+    public HashMap<Integer, String> memberIpToId;
     protected HashMap<IPClient, LBMember> clientToMember;
     
     //Copied from Forwarding with message damper routine for pushing proxy Arp 
@@ -135,10 +135,10 @@ public class LoadBalancer implements IFloodlightModule,
 
     // data structure for storing connected
     public class IPClient {
-        IPv4Address ipAddress;
-        IpProtocol nw_proto;
-        TransportPort srcPort; // tcp/udp src port. icmp type (OFMatch convention)
-        TransportPort targetPort; // tcp/udp dst port, icmp code (OFMatch convention)
+        public IPv4Address ipAddress;
+        public IpProtocol nw_proto;
+        public TransportPort srcPort; // tcp/udp src port. icmp type (OFMatch convention)
+        public TransportPort targetPort; // tcp/udp dst port, icmp code (OFMatch convention)
         
         public IPClient() {
             ipAddress = IPv4Address.NONE;
@@ -292,7 +292,6 @@ public class LoadBalancer implements IFloodlightModule,
         // push ARP reply out
         pushPacket(arpReply, sw, OFBufferId.NO_BUFFER, OFPort.ANY, (pi.getVersion().compareTo(OFVersion.OF_12) < 0 ? pi.getInPort() : pi.getMatch().get(MatchField.IN_PORT)), cntx, true);
         log.debug("proxy ARP reply pushed as {}", IPv4.fromIPv4Address(vips.get(vipId).address));
-        
         return;
     }
 
@@ -356,7 +355,7 @@ public class LoadBalancer implements IFloodlightModule,
      * @param IPClient client
      * @param LBMember member
      */
-    protected void pushBidirectionalVipRoutes(IOFSwitch sw, OFPacketIn pi, FloodlightContext cntx, IPClient client, LBMember member) {
+    public void pushBidirectionalVipRoutes(IOFSwitch sw, OFPacketIn pi, FloodlightContext cntx, IPClient client, LBMember member) {
         
         // borrowed code from Forwarding to retrieve src and dst device entities
         // Check if we have the location of the destination
@@ -492,6 +491,7 @@ public class LoadBalancer implements IFloodlightModule,
      * @param LBMember member
      * @param long pinSwitch
      */
+    
     public void pushStaticVipRoute(boolean inBound, Route route, IPClient client, LBMember member, IOFSwitch pinSwitch) {
         List<NodePortTuple> path = route.getPath();
         if (path.size() > 0) {

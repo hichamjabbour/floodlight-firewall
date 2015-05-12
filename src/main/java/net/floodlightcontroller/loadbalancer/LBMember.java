@@ -28,16 +28,15 @@ import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 @JsonSerialize(using=LBMemberSerializer.class)
 public class LBMember {
     protected String id;
-    protected int address;
+    public int address;
     protected short port;
     protected String macString;
-    
     protected int connectionLimit;
     protected short adminState;
     protected short status;
 
-    protected String poolId;
-    protected String vipId;
+    public String poolId;
+    public String vipId;
     
     public LBMember() {
         id = String.valueOf((int) (Math.random()*10000));

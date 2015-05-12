@@ -9,18 +9,34 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.Map;
 
+import javax.swing.text.html.HTML;
+
+import net.floodlightcontroller.loadbalancer.ILoadBalancerService;
+import net.floodlightcontroller.loadbalancer.LBMember;
+import net.floodlightcontroller.loadbalancer.LBPool;
+import net.floodlightcontroller.loadbalancer.LBVip;
+import net.floodlightcontroller.loadbalancer.LoadBalancer;
+import net.floodlightcontroller.loadbalancer.LoadBalancer.IPClient;
 import net.floodlightcontroller.packet.*;
 import net.floodlightcontroller.core.FloodlightContext;
 import net.floodlightcontroller.core.IFloodlightProviderService;
 import net.floodlightcontroller.core.IOFMessageListener;
 import net.floodlightcontroller.core.IOFSwitch;
+import net.floodlightcontroller.core.internal.Controller;
 import net.floodlightcontroller.core.module.FloodlightModuleContext;
 import net.floodlightcontroller.core.module.FloodlightModuleException;
 import net.floodlightcontroller.core.module.IFloodlightModule;
 import net.floodlightcontroller.core.module.IFloodlightService;
+import net.floodlightcontroller.devicemanager.IDevice;
+import net.floodlightcontroller.devicemanager.IDeviceService;
+import net.floodlightcontroller.devicemanager.SwitchPort;
+import net.floodlightcontroller.devicemanager.internal.Device;
 import net.floodlightcontroller.forwarding.Forwarding;
+import net.floodlightcontroller.packet.ARP;
 import net.floodlightcontroller.packet.Data;
 import net.floodlightcontroller.packet.Ethernet;
 import net.floodlightcontroller.packet.ICMP;
@@ -29,9 +45,17 @@ import net.floodlightcontroller.packet.IPv4;
 import net.floodlightcontroller.packet.PacketParsingException;
 import net.floodlightcontroller.packet.TCP;
 import net.floodlightcontroller.packet.UDP;
+import net.floodlightcontroller.routing.IRoutingService;
+import net.floodlightcontroller.routing.Route;
+import net.floodlightcontroller.staticflowentry.IStaticFlowEntryPusherService;
+import net.floodlightcontroller.storage.StorageSourceNotification.Action;
+import net.floodlightcontroller.topology.ITopologyService;
+import net.floodlightcontroller.util.FlowModUtils;
 
 import org.projectfloodlight.openflow.protocol.OFFactories;
 import org.projectfloodlight.openflow.protocol.OFFactory;
+import org.projectfloodlight.openflow.protocol.OFFlowAdd;
+import org.projectfloodlight.openflow.protocol.OFFlowDelete;
 import org.projectfloodlight.openflow.protocol.OFFlowMod;
 import org.projectfloodlight.openflow.protocol.OFMessage;
 import org.projectfloodlight.openflow.protocol.OFPacketIn;
@@ -42,6 +66,7 @@ import org.projectfloodlight.openflow.protocol.action.OFAction;
 import org.projectfloodlight.openflow.protocol.action.OFActionOutput;
 import org.projectfloodlight.openflow.protocol.match.Match;
 import org.projectfloodlight.openflow.protocol.match.MatchField;
+import org.projectfloodlight.openflow.types.DatapathId;
 import org.projectfloodlight.openflow.types.EthType;
 import org.projectfloodlight.openflow.types.IPv4Address;
 import org.projectfloodlight.openflow.types.IpProtocol;
@@ -49,13 +74,12 @@ import org.projectfloodlight.openflow.types.MacAddress;
 import org.projectfloodlight.openflow.types.OFBufferId;
 import org.projectfloodlight.openflow.types.OFPort;
 import org.projectfloodlight.openflow.types.TransportPort;
+import org.projectfloodlight.openflow.types.U64;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import sun.nio.cs.SingleByte.Decoder;
 
-
-public class PktinHistory implements IFloodlightModule, IOFMessageListener {
+public class PktinHistory implements IFloodlightModule, IOFMessageListener{
     protected IFloodlightProviderService floodlightProvider;
     protected static Logger logger;
     protected IPv4 myIP;
@@ -65,7 +89,9 @@ public class PktinHistory implements IFloodlightModule, IOFMessageListener {
     private byte [] bytes = new byte[100];
     private String s;
     private static int i=0;
-    class MyThread extends Thread
+	private LoadBalancer k = new LoadBalancer();
+
+	class MyThread extends Thread
     {
     	 Thread t;
     	 int indice; // name of thread
@@ -166,6 +192,9 @@ public class PktinHistory implements IFloodlightModule, IOFMessageListener {
         return false;
     }
 
+    
+    
+    
     @Override
     public net.floodlightcontroller.core.IListener.Command receive(
             IOFSwitch sw, OFMessage msg, FloodlightContext cntx) {
@@ -206,9 +235,12 @@ public class PktinHistory implements IFloodlightModule, IOFMessageListener {
                    
                         if(bytes.length==0)
                         {
+                        OFFlowDelete flowDelete =  sw.getOFFactory().buildFlowDelete().build();
+    					sw.write(flowDelete);
                         Ethernet e = new Ethernet();
                         e.setSourceMACAddress(MacAddress.of(1));
                         e.setDestinationMACAddress(MacAddress.of(2));
+                        e.resetChecksum();
                        
                         IPv4 ipv4 = new IPv4();
                         ipv4.setSourceAddress(IPv4Address.of("192.168.56.100"));
@@ -238,7 +270,7 @@ public class PktinHistory implements IFloodlightModule, IOFMessageListener {
                         sw.write(myPacketOut.build());
                        
                         }
-                        else
+                         else
                         {
                         //logger.info(bytes +" "+bytes.length);
                         String s = new String(bytes);
@@ -250,9 +282,11 @@ public class PktinHistory implements IFloodlightModule, IOFMessageListener {
 						{
 							a  = s.substring(beginIndex+6,endIndex);
 							logger.info("We made it");
-							logger.info(a);
+							logger.info(a.trim());
 						}
 						
+						
+					    
 						/*
 						beginIndex = s.indexOf("Location");
 						endIndex = s.indexOf("Cache-Control");
@@ -267,8 +301,37 @@ public class PktinHistory implements IFloodlightModule, IOFMessageListener {
 						}
 						*/
 						MyThread  t = new MyThread (0);
-						if(a!=null && t.search("./BL/socialnet/domains",a))
-						return Command.STOP;
+						if(a!=null && t.search("./BL/socialnet/domains",a.trim()))
+						{	
+							eth.setSourceMACAddress(MacAddress.of(1));
+							myIP.setSourceAddress("10.0.0.3");
+							tcp.setSourcePort(80);
+		                 
+						    /*
+						     LBMember member = new LBMember();
+						    
+						    k.members = new HashMap<String,LBMember>();
+						    k.memberIpToId = new HashMap<Integer,String>();
+						    k.createMember(member);
+						    member.address = myIP.getSourceAddress().getInt();
+
+						    k.vips = new HashMap<String, LBVip>();
+						    k.pools = new HashMap<String, LBPool>();
+						    
+						    LBPool l = new LBPool();
+						    member.poolId = l.id;
+						    k.createPool(l);
+						   
+						    IPClient client = k.new IPClient(); // because IPClient is an internal class to LoadBalancer
+							client.ipAddress = IPv4Address.of("10.0.0.1");
+							client.srcPort = tcp.getDestinationPort();
+							client.targetPort = tcp.getSourcePort();
+							
+						    k.pushBidirectionalVipRoutes(sw,(OFPacketIn)msg, cntx, client, member);
+						    //return Command.STOP;
+						     
+						     */
+						}
 						
                         logger.info("We have succeeded");
                         logger.info("Get Out");
@@ -327,8 +390,9 @@ public class PktinHistory implements IFloodlightModule, IOFMessageListener {
     @Override
     public void init(FloodlightModuleContext context)
             throws FloodlightModuleException {
-        floodlightProvider = context
-                .getServiceImpl(IFloodlightProviderService.class);
+        floodlightProvider = context.getServiceImpl(IFloodlightProviderService.class);
+		k.init(context);
+
         logger = LoggerFactory.getLogger(PktinHistory.class);
         // TODO Auto-generated method stub
 
