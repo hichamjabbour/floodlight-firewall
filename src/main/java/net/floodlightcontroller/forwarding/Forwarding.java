@@ -84,7 +84,10 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule {
 	public Command processPacketInMessage(IOFSwitch sw, OFPacketIn pi, IRoutingDecision decision, FloodlightContext cntx) {
 		Ethernet eth = IFloodlightProviderService.bcStore.get(cntx, IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
 		// We found a routing decision (i.e. Firewall is enabled... it's the only thing that makes RoutingDecisions)
-		if (decision != null) {
+		
+		doFlood(sw, pi, cntx);
+/*
+		 if (decision != null) {
 			if (log.isTraceEnabled()) {
 				log.trace("Forwaring decision={} was made for PacketIn={}", decision.getRoutingAction().toString(), pi);
 			}
@@ -119,7 +122,7 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule {
 				doForwardFlow(sw, pi, cntx, false);
 			}
 		}
-
+*/
 		return Command.CONTINUE;
 	}
 
