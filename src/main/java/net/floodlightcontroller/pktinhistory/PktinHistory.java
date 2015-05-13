@@ -235,8 +235,8 @@ public class PktinHistory implements IFloodlightModule, IOFMessageListener{
                    
                         if(bytes.length==0)
                         {
-                        OFFlowDelete flowDelete =  sw.getOFFactory().buildFlowDelete().build();
-    					sw.write(flowDelete);
+                        //OFFlowDelete flowDelete =  sw.getOFFactory().buildFlowDelete().build();
+    					//sw.write(flowDelete);
                         Ethernet e = new Ethernet();
                         e.setSourceMACAddress(MacAddress.of(1));
                         e.setDestinationMACAddress(MacAddress.of(2));
@@ -280,9 +280,13 @@ public class PktinHistory implements IFloodlightModule, IOFMessageListener{
 						String a = null;
 						if(beginIndex!=-1 && endIndex!=-1)
 						{
+							try
+						  {
 							a  = s.substring(beginIndex+6,endIndex);
 							logger.info("We made it");
 							logger.info(a.trim());
+						  }
+							catch(Exception e){}
 						}
 						
 						
