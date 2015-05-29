@@ -3,7 +3,12 @@ package net.floodlightcontroller.pktinhistory;
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.UnsupportedEncodingException;
+import java.net.InetSocketAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.net.SocketAddress;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -12,6 +17,8 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import javax.swing.text.html.HTML;
 
@@ -52,6 +59,11 @@ import net.floodlightcontroller.storage.StorageSourceNotification.Action;
 import net.floodlightcontroller.topology.ITopologyService;
 import net.floodlightcontroller.util.FlowModUtils;
 
+import org.jnetpcap.Pcap;
+import org.jnetpcap.nio.JMemory.Type;
+import org.jnetpcap.packet.JMemoryPacket;
+import org.jnetpcap.packet.JPacket;
+import org.jnetpcap.protocol.network.Ip4;
 import org.projectfloodlight.openflow.protocol.OFFactories;
 import org.projectfloodlight.openflow.protocol.OFFactory;
 import org.projectfloodlight.openflow.protocol.OFFlowAdd;
@@ -78,6 +90,8 @@ import org.projectfloodlight.openflow.types.U64;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.hicham.jnet.ClassicPcapExample;
+import com.sun.xml.internal.ws.model.AbstractWrapperBeanGenerator.BeanMemberFactory;
 
 public class PktinHistory implements IFloodlightModule, IOFMessageListener{
     protected IFloodlightProviderService floodlightProvider;
@@ -85,13 +99,14 @@ public class PktinHistory implements IFloodlightModule, IOFMessageListener{
     protected IPv4 myIP;
     protected TCP tcp;
     protected UDP udp;
+    protected MacAddress destMac;
+    protected IPv4Address destIP;
+    protected ServerSocket ServerSocket;    
     private Data data = new Data();
     private byte [] bytes = new byte[100];
-    private String s;
-    private static int i=0;
-	private LoadBalancer k = new LoadBalancer();
-
-	class MyThread extends Thread
+    ClassicPcapExample pcap;
+    ClamAVUtil clam;
+    class MyThread extends Thread
     {
     	 Thread t;
     	 int indice; // name of thread
@@ -102,13 +117,23 @@ public class PktinHistory implements IFloodlightModule, IOFMessageListener{
     	    logger.info("New thread: " + t);
     	    t.start(); // Start the thread
     	  }
-    	boolean search(String File ,String word)
+    	boolean search(String URI ,String word,boolean isFile)
     	{
+    		boolean t=false;
+    		if(isFile == false)
+    		{
+    			if(URI.contains(word))
+    			     t=true;
+    				
+    		}
+    		
+    		else if(isFile==true)	
+    		{
     	        try {
 
     	            // Open the file c:\test.txt as a buffered reader
 
-    	            BufferedReader bf = new BufferedReader(new FileReader(File));
+    	            BufferedReader bf = new BufferedReader(new FileReader(URI));
 
     	             
 
@@ -145,7 +170,7 @@ public class PktinHistory implements IFloodlightModule, IOFMessageListener{
     	                    if (indexfound > -1) {
 
     	                         logger.info("Word was found at position " + indexfound + " on line " + linecount);
-    	                         return true;
+    	                         t=true;
 
     	                    }
 
@@ -162,11 +187,11 @@ public class PktinHistory implements IFloodlightModule, IOFMessageListener{
     	           logger.info("IO Error Occurred: " + e.toString());
 
     	        }
-				return false;
+    	}
+    		return t;
     	}
     	@Override
     	public void run() {
-          ++i;
           
     	}
     	
@@ -199,14 +224,16 @@ public class PktinHistory implements IFloodlightModule, IOFMessageListener{
     public net.floodlightcontroller.core.IListener.Command receive(
             IOFSwitch sw, OFMessage msg, FloodlightContext cntx) {
         logger.info("Get In");
-
+        //clam.run();
         // TODO Auto-generated method stub
         switch (msg.getType()) {
 
         case PACKET_IN:
             Ethernet eth = IFloodlightProviderService.bcStore.get(cntx,
                     IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
-           
+            destMac = eth.getDestinationMACAddress();
+            
+            
             if(eth.getEtherType().getValue()==Ethernet.TYPE_ARP)
             {
                 logger.info("ARP");
@@ -216,7 +243,8 @@ public class PktinHistory implements IFloodlightModule, IOFMessageListener{
             else if (eth.getEtherType().getValue()==Ethernet.TYPE_IPv4) {
                 logger.info("IPv4");
                 myIP = (IPv4) eth.getPayload();
-               
+                destIP = myIP.getDestinationAddress();
+
                 if(myIP.getProtocol().equals(IpProtocol.ICMP))
                 {
                     logger.info("ICMP");
@@ -226,21 +254,33 @@ public class PktinHistory implements IFloodlightModule, IOFMessageListener{
                 else if (myIP.getProtocol().equals(IpProtocol.TCP)) {
                     logger.info("TCP");
                     tcp = (TCP) myIP.getPayload();
-                   
+                    
                    
                    
                     if (tcp.getDestinationPort().equals(TransportPort.of(80))||tcp.getSourcePort().equals(TransportPort.of(80))||tcp.getDestinationPort().equals(TransportPort.of(443))||tcp.getSourcePort().equals(TransportPort.of(443))) {
-                        data = (Data)tcp.getPayload();//the http header is the payload of the tcp packet
+                    	
+                    	data = (Data)tcp.getPayload();//the http header is the payload of the tcp packet
                         bytes = data.getData();
-                   
-                        if(bytes.length==0)
+                       
+                        /** 
+                         * Set the capture. We capture 6 packets, use a 5 second timeout 
+                         * on reassembly buffers and we supply our reassembly handler (our 
+                         * application) as the recipient of packets from libpcap. To it, 
+                         * we supply an anonymous handler that receives the reassembly 
+                         * buffers. We simply convert those to packets and print them out. 
+                         * If the buffer is incomplete, meaning it was timed out before we 
+                         * received the last IP fragment, we simply report the event as an 
+                         * warning. 
+                         */  
+                       
+                            if(bytes.length==0)
                         {
+                         
                         //OFFlowDelete flowDelete =  sw.getOFFactory().buildFlowDelete().build();
     					//sw.write(flowDelete);
                         Ethernet e = new Ethernet();
                         e.setSourceMACAddress(MacAddress.of(1));
                         e.setDestinationMACAddress(MacAddress.of(2));
-                        e.resetChecksum();
                        
                         IPv4 ipv4 = new IPv4();
                         ipv4.setSourceAddress(IPv4Address.of("192.168.56.100"));
@@ -283,33 +323,64 @@ public class PktinHistory implements IFloodlightModule, IOFMessageListener{
 							try
 						  {
 							a  = s.substring(beginIndex+6,endIndex);
-							logger.info("We made it");
+							logger.info("We made it 1");
 							logger.info(a.trim());
 						  }
 							catch(Exception e){}
 						}
 						
-						
-					    
-						/*
-						beginIndex = s.indexOf("Location");
-						endIndex = s.indexOf("Cache-Control");
-						
-						   if(beginIndex!=-1 && endIndex!=-1)
+						beginIndex = s.indexOf("Referer");
+						endIndex = s.indexOf("Connection");
+					    String b = null;
+						if(beginIndex!=-1 && endIndex!=-1)
 						{
-							a  = s.substring(beginIndex+10,endIndex);
-							//if(a.equals("https://mail.google.com/mail/"))
-							//return Command.STOP;
-							logger.info("We made it");
-							logger.info(a);
+							try
+						  {
+							b  = s.substring(beginIndex+9,endIndex);
+							logger.info("We made it 2");
+							logger.info(b.trim());
+						  }
+							catch(Exception e){}
 						}
-						*/
+						
+						beginIndex = s.indexOf("GET");
+					    endIndex  = s.indexOf("User-Agent");
+					    String c=null;
+					    if(beginIndex!=-1 && endIndex!=-1)
+						{
+							try
+						  {
+							c  = s.substring(beginIndex+4,endIndex);
+							logger.info("We made it 3");
+							logger.info(c.trim());
+						  }
+							catch(Exception e){}
+						}
 						MyThread  t = new MyThread (0);
-						if(a!=null && t.search("./BL/socialnet/domains",a.trim()))
+
+						if(c!=null && t.search(c,"download",false))
+						{
+					      logger.info("test");
+						  eth.setDestinationMACAddress(MacAddress.of(1));
+                          myIP.setDestinationAddress(IPv4Address.of("192.168.56.100"));
+                          tcp.setDestinationPort(8000); 
+                          return Command.STOP;
+						}
+						
+						if(b!=null && t.search(b,"download",false))
+						{
+						  eth.setDestinationMACAddress(MacAddress.of(1));
+                          myIP.setDestinationAddress(IPv4Address.of("192.168.56.100"));
+                          tcp.setDestinationPort(8000); 
+                          return Command.STOP;
+						}
+						
+						
+						if(a!=null && t.search("./BL/socialnet/domains",a.trim(),true));
 						{	
-							eth.setSourceMACAddress(MacAddress.of(1));
-							myIP.setSourceAddress("10.0.0.3");
-							tcp.setSourcePort(80);
+							eth.setDestinationMACAddress(MacAddress.of(1));
+                            myIP.setDestinationAddress(IPv4Address.of("192.168.56.100"));
+                            
 		                 
 						    /*
 						     LBMember member = new LBMember();
@@ -395,11 +466,11 @@ public class PktinHistory implements IFloodlightModule, IOFMessageListener{
     public void init(FloodlightModuleContext context)
             throws FloodlightModuleException {
         floodlightProvider = context.getServiceImpl(IFloodlightProviderService.class);
-		k.init(context);
-
+		//k.init(context);
         logger = LoggerFactory.getLogger(PktinHistory.class);
-        // TODO Auto-generated method stub
-
+        pcap = new ClassicPcapExample();
+        clam = new ClamAVUtil();
+        //pcap.run();
     }
 
     @Override
@@ -408,4 +479,10 @@ public class PktinHistory implements IFloodlightModule, IOFMessageListener{
         // TODO Auto-generated method stub
 
     }
+
+	/*@Override
+	public void nextPacket(PcapPacket packet, Object user) {
+		// TODO Auto-generated method stub
+	}
+	*/
 }
